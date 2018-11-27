@@ -163,6 +163,26 @@ class bitfinex2 extends bitfinex {
                     ),
                 ),
             ),
+            'wsconf' => array (
+                'conx-tpls' => array (
+                    'default' => array (
+                        'type' => 'ws',
+                        'baseurl' => 'wss://api.bitfinex.com/ws/2',
+                    ),
+                ),
+                'methodmap' => array (
+                    '_websocketTimeoutRemoveNonce' => '_websocketTimeoutRemoveNonce',
+                ),
+                'events' => array (
+                    'ob' => array (
+                        'conx-tpl' => 'default',
+                        'conx-param' => array (
+                            'url' => '{baseurl}',
+                            'id' => '{id}',
+                        ),
+                    ),
+                ),
+            ),
         ));
     }
 
@@ -495,5 +515,219 @@ class bitfinex2 extends bitfinex {
             throw new ExchangeError ($this->id . ' returned empty response');
         }
         return $response;
+    }
+
+    public function _websocket_on_message ($contextId, $data) {
+        $msg = json_decode ($data, $as_associative_array = true);
+        // var_dump($msg);
+        $event = $this->safe_string($msg, 'event');
+        if ($event !== null) {
+            if ($event === 'subscribed') {
+                $channel = $this->safe_string($msg, 'channel');
+                if ($channel === 'book') {
+                    $this->_websocket_handle_subscription ($contextId, 'ob', $msg);
+                }
+            } else if ($event === 'unsubscribed') {
+                $this->_websocket_handle_unsubscription ($contextId, $msg);
+            } else if ($event === 'error') {
+                $this->_websocket_handle_error ($contextId, $msg);
+            }
+        } else {
+            // $channel $data
+            $chanId = $msg[0];
+            $data = $msg[1];
+            if ($data === 'hb') {
+                // var_dump ('heartbeat');
+                return;
+            }
+            $chanKey = '_' . (string) $chanId;
+            $channels = $this->_contextGet ($contextId, 'channels');
+            if (!(is_array ($channels) && array_key_exists ($chanKey, $channels))) {
+                $this->emit ('err', new ExchangeError ($this->id . ' $msg received from unregistered $channels:' . $chanId));
+                return;
+            }
+            $symbol = $channels[$chanKey]['symbol'];
+            $event = $channels[$chanKey]['event'];
+            if ($event === 'ob') {
+                $this->_websocket_handle_order_book ($contextId, $symbol, $msg);
+            }
+        }
+    }
+
+    public function _websocket_handle_error ($contextId, $msg) {
+        $channel = $this->safe_string($msg, 'channel');
+        $errorMsg = $this->safe_string($msg, 'msg');
+        $errorCode = $this->safe_string($msg, 'code');
+        $ex = new ExchangeError ($this->id . ' ' . $errorCode . ':' . $errorMsg);
+        if ($channel === 'book') {
+            $id = $this->safe_string($msg, 'symbol');
+            $symbol = $this->find_symbol($id);
+            $this->_websocket_process_pending_nonces ($contextId, 'sub-nonces', 'ob', $symbol, false, $ex);
+        }
+        $this->emit ('err', $ex, $contextId);
+    }
+
+    public function _websocket_handle_order_book ($contextId, $symbol, $msg) {
+        $data = $msg[1];
+        $firstElement = $data[0];
+        $symbolData = $this->_contextGetSymbolData ($contextId, 'ob', $symbol);
+        if (gettype ($firstElement) === 'array' && count (array_filter (array_keys ($firstElement), 'is_string')) == 0) {
+            // snapshot
+            $symbolData['ob'] = array (
+                'bids' => array (),
+                'asks' => array (),
+                'timestamp' => null,
+                'datetime' => null,
+                'nonce' => null,
+            );
+            for ($i = 0; $i < count ($data); $i++) {
+                $record = $data[$i];
+                $price = $record[0];
+                $c = $record[1];
+                $amount = $record[2];
+                $side = ($amount > 0) ? 'bids' : 'asks';
+                if ($c === 0) {
+                    // remove
+                    $this->updateBidAsk ([$price, 0], $symbolData['ob'][$side], $amount > 0);
+                } else {
+                    // update
+                    $this->updateBidAsk ([$price, $amount], $symbolData['ob'][$side], $amount > 0);
+                }
+            }
+        } else {
+            // update
+            $price = $data[0];
+            $c = $data[1];
+            $amount = $data[2];
+            $side = ($amount > 0) ? 'bids' : 'asks';
+            if ($c === 0) {
+                // remove
+                $this->updateBidAsk ([$price, 0], $symbolData['ob'][$side], $amount > 0);
+            } else {
+                // update
+                $this->updateBidAsk ([$price, $amount], $symbolData['ob'][$side], $amount > 0);
+            }
+        }
+        $this->emit ('ob', $symbol, $this->_cloneOrderBook ($symbolData['ob'], $symbolData['limit']));
+        $this->_contextSetSymbolData ($contextId, 'ob', $symbol, $symbolData);
+    }
+
+    public function _websocket_process_pending_nonces ($contextId, $nonceKey, $event, $symbol, $success, $ex) {
+        $symbolData = $this->_contextGetSymbolData ($contextId, $event, $symbol);
+        if (is_array ($symbolData) && array_key_exists ($nonceKey, $symbolData)) {
+            $nonces = $symbolData[$nonceKey];
+            $keys = is_array ($nonces) ? array_keys ($nonces) : array ();
+            for ($i = 0; $i < count ($keys); $i++) {
+                $nonce = $keys[$i];
+                $this->_cancelTimeout ($nonces[$nonce]);
+                $this->emit ($nonce, $success, $ex);
+            }
+            $symbolData[$nonceKey] = array ();
+            $this->_contextSetSymbolData ($contextId, $event, $symbol, $symbolData);
+        }
+    }
+
+    public function _websocket_handle_subscription ($contextId, $event, $msg) {
+        $id = $this->safe_string($msg, 'symbol');
+        $symbol = $this->find_symbol($id);
+        $channel = $this->safe_integer($msg, 'chanId');
+        $chanKey = '_' . (string) $channel;
+        $channels = $this->_contextGet ($contextId, 'channels');
+        if ($channels === null) {
+            $channels = array ();
+        }
+        $channels[$chanKey] = array (
+            'response' => $msg,
+            'symbol' => $symbol,
+            'event' => $event,
+        );
+        $this->_contextSet ($contextId, 'channels', $channels);
+        $symbolData = $this->_contextGetSymbolData ($contextId, $event, $symbol);
+        $symbolData['channelId'] = $channel;
+        $this->_contextSetSymbolData ($contextId, $event, $symbol, $symbolData);
+        $this->_websocket_process_pending_nonces ($contextId, 'sub-nonces', 'ob', $symbol, true, null);
+    }
+
+    public function _websocket_handle_unsubscription ($contextId, $msg) {
+        $status = $this->safe_string($msg, 'status');
+        if ($status === 'OK') {
+            $chanId = $this->safe_integer($msg, 'chanId');
+            $chanKey = '_' . (string) $chanId;
+            $channels = $this->_contextGet ($contextId, 'channels');
+            if (!(is_array ($channels) && array_key_exists ($chanKey, $channels))) {
+                $this->emit ('err', new ExchangeError ($this->id . ' $msg received from unregistered $channels:' . $chanId));
+                return;
+            }
+            $symbol = $channels[$chanKey]['symbol'];
+            $event = $channels[$chanKey]['event'];
+            // remove channel ids ?
+            $this->omit ($channels, $chanKey);
+            $this->_contextSet ($contextId, 'channels', $channels);
+            $this->_websocket_process_pending_nonces ($contextId, 'unsub-nonces', $event, $symbol, true, null);
+        }
+    }
+
+    public function _websocket_subscribe ($contextId, $event, $symbol, $nonce, $params = array ()) {
+        if ($event !== 'ob') {
+            throw new NotSupported ('subscribe ' . $event . '(' . $symbol . ') not supported for exchange ' . $this->id);
+        }
+        // save $nonce for subscription response
+        $symbolData = $this->_contextGetSymbolData ($contextId, $event, $symbol);
+        if (!(is_array ($symbolData) && array_key_exists ('sub-nonces', $symbolData))) {
+            $symbolData['sub-nonces'] = array ();
+        }
+        $symbolData['limit'] = $this->safe_integer($params, 'limit', null);
+        $nonceStr = (string) $nonce;
+        $handle = $this->_setTimeout ($this->timeout, $this->_websocketMethodMap ('_websocketTimeoutRemoveNonce'), [$contextId, $nonceStr, $event, $symbol, 'sub-nonce']);
+        $symbolData['sub-nonces'][$nonceStr] = $handle;
+        $this->_contextSetSymbolData ($contextId, $event, $symbol, $symbolData);
+        // send request
+        $id = $this->market_id($symbol);
+        $this->websocketSendJson (array (
+            'event' => 'subscribe',
+            'channel' => 'book',
+            'symbol' => $id,
+            'prec' => 'P0',
+            'freq' => 'F0',
+            'len' => '100',
+        ));
+    }
+
+    public function _websocket_unsubscribe ($contextId, $event, $symbol, $nonce, $params = array ()) {
+        if ($event !== 'ob') {
+            throw new NotSupported ('unsubscribe ' . $event . '(' . $symbol . ') not supported for exchange ' . $this->id);
+        }
+        $symbolData = $this->_contextGetSymbolData ($contextId, $event, $symbol);
+        $payload = array (
+            'event' => 'unsubscribe',
+            'chanId' => $symbolData['channelId'],
+        );
+        if (!(is_array ($symbolData) && array_key_exists ('unsub-nonces', $symbolData))) {
+            $symbolData['unsub-nonces'] = array ();
+        }
+        $nonceStr = (string) $nonce;
+        $handle = $this->_setTimeout ($this->timeout, $this->_websocketMethodMap ('_websocketTimeoutRemoveNonce'), [$contextId, $nonceStr, $event, $symbol, 'unsub-nonces']);
+        $symbolData['unsub-nonces'][$nonceStr] = $handle;
+        $this->_contextSetSymbolData ($contextId, $event, $symbol, $symbolData);
+        $this->websocketSendJson ($payload);
+    }
+
+    public function _websocket_timeout_remove_nonce ($contextId, $timerNonce, $event, $symbol, $key) {
+        $symbolData = $this->_contextGetSymbolData ($contextId, $event, $symbol);
+        if (is_array ($symbolData) && array_key_exists ($key, $symbolData)) {
+            $nonces = $symbolData[$key];
+            if (is_array ($nonces) && array_key_exists ($timerNonce, $nonces)) {
+                $this->omit ($symbolData[$key], $timerNonce);
+                $this->_contextSetSymbolData ($contextId, $event, $symbol, $symbolData);
+            }
+        }
+    }
+
+    public function _get_current_websocket_orderbook ($contextId, $symbol, $limit) {
+        $data = $this->_contextGetSymbolData ($contextId, 'ob', $symbol);
+        if ((is_array ($data) && array_key_exists ('ob', $data)) && ($data['ob'] !== null)) {
+            return $this->_cloneOrderBook ($data['ob'], $limit);
+        }
+        return null;
     }
 }

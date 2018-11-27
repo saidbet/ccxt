@@ -6,6 +6,7 @@
 from ccxt.bitfinex import bitfinex
 import hashlib
 import math
+import json
 from ccxt.base.errors import ExchangeError
 from ccxt.base.errors import InsufficientFunds
 from ccxt.base.errors import NotSupported
@@ -164,6 +165,26 @@ class bitfinex2 (bitfinex):
                         'SNT': 14.303,
                         'QASH': 3.2428,
                         'YYW': 18.055,
+                    },
+                },
+            },
+            'wsconf': {
+                'conx-tpls': {
+                    'default': {
+                        'type': 'ws',
+                        'baseurl': 'wss://api.bitfinex.com/ws/2',
+                    },
+                },
+                'methodmap': {
+                    '_websocketTimeoutRemoveNonce': '_websocketTimeoutRemoveNonce',
+                },
+                'events': {
+                    'ob': {
+                        'conx-tpl': 'default',
+                        'conx-param': {
+                            'url': '{baseurl}',
+                            'id': '{id}',
+                        },
                     },
                 },
             },
@@ -460,3 +481,184 @@ class bitfinex2 (bitfinex):
         elif response == '':
             raise ExchangeError(self.id + ' returned empty response')
         return response
+
+    def _websocket_on_message(self, contextId, data):
+        msg = json.loads(data)
+        # console.log(msg)
+        event = self.safe_string(msg, 'event')
+        if event is not None:
+            if event == 'subscribed':
+                channel = self.safe_string(msg, 'channel')
+                if channel == 'book':
+                    self._websocket_handle_subscription(contextId, 'ob', msg)
+            elif event == 'unsubscribed':
+                self._websocket_handle_unsubscription(contextId, msg)
+            elif event == 'error':
+                self._websocket_handle_error(contextId, msg)
+        else:
+            # channel data
+            chanId = msg[0]
+            data = msg[1]
+            if data == 'hb':
+                # print('heartbeat')
+                return
+            chanKey = '_' + str(chanId)
+            channels = self._contextGet(contextId, 'channels')
+            if not(chanKey in list(channels.keys())):
+                self.emit('err', ExchangeError(self.id + ' msg received from unregistered channels:' + chanId))
+                return
+            symbol = channels[chanKey]['symbol']
+            event = channels[chanKey]['event']
+            if event == 'ob':
+                self._websocket_handle_order_book(contextId, symbol, msg)
+
+    def _websocket_handle_error(self, contextId, msg):
+        channel = self.safe_string(msg, 'channel')
+        errorMsg = self.safe_string(msg, 'msg')
+        errorCode = self.safe_string(msg, 'code')
+        ex = ExchangeError(self.id + ' ' + errorCode + ':' + errorMsg)
+        if channel == 'book':
+            id = self.safe_string(msg, 'symbol')
+            symbol = self.find_symbol(id)
+            self._websocket_process_pending_nonces(contextId, 'sub-nonces', 'ob', symbol, False, ex)
+        self.emit('err', ex, contextId)
+
+    def _websocket_handle_order_book(self, contextId, symbol, msg):
+        data = msg[1]
+        firstElement = data[0]
+        symbolData = self._contextGetSymbolData(contextId, 'ob', symbol)
+        if isinstance(firstElement, list):
+            # snapshot
+            symbolData['ob'] = {
+                'bids': [],
+                'asks': [],
+                'timestamp': None,
+                'datetime': None,
+                'nonce': None,
+            }
+            for i in range(0, len(data)):
+                record = data[i]
+                price = record[0]
+                c = record[1]
+                amount = record[2]
+                side = 'bids' if (amount > 0) else 'asks'
+                if c == 0:
+                    # remove
+                    self.updateBidAsk([price, 0], symbolData['ob'][side], amount > 0)
+                else:
+                    # update
+                    self.updateBidAsk([price, amount], symbolData['ob'][side], amount > 0)
+        else:
+            # update
+            price = data[0]
+            c = data[1]
+            amount = data[2]
+            side = 'bids' if (amount > 0) else 'asks'
+            if c == 0:
+                # remove
+                self.updateBidAsk([price, 0], symbolData['ob'][side], amount > 0)
+            else:
+                # update
+                self.updateBidAsk([price, amount], symbolData['ob'][side], amount > 0)
+        self.emit('ob', symbol, self._cloneOrderBook(symbolData['ob'], symbolData['limit']))
+        self._contextSetSymbolData(contextId, 'ob', symbol, symbolData)
+
+    def _websocket_process_pending_nonces(self, contextId, nonceKey, event, symbol, success, ex):
+        symbolData = self._contextGetSymbolData(contextId, event, symbol)
+        if nonceKey in symbolData:
+            nonces = symbolData[nonceKey]
+            keys = list(nonces.keys())
+            for i in range(0, len(keys)):
+                nonce = keys[i]
+                self._cancelTimeout(nonces[nonce])
+                self.emit(nonce, success, ex)
+            symbolData[nonceKey] = {}
+            self._contextSetSymbolData(contextId, event, symbol, symbolData)
+
+    def _websocket_handle_subscription(self, contextId, event, msg):
+        id = self.safe_string(msg, 'symbol')
+        symbol = self.find_symbol(id)
+        channel = self.safe_integer(msg, 'chanId')
+        chanKey = '_' + str(channel)
+        channels = self._contextGet(contextId, 'channels')
+        if channels is None:
+            channels = {}
+        channels[chanKey] = {
+            'response': msg,
+            'symbol': symbol,
+            'event': event,
+        }
+        self._contextSet(contextId, 'channels', channels)
+        symbolData = self._contextGetSymbolData(contextId, event, symbol)
+        symbolData['channelId'] = channel
+        self._contextSetSymbolData(contextId, event, symbol, symbolData)
+        self._websocket_process_pending_nonces(contextId, 'sub-nonces', 'ob', symbol, True, None)
+
+    def _websocket_handle_unsubscription(self, contextId, msg):
+        status = self.safe_string(msg, 'status')
+        if status == 'OK':
+            chanId = self.safe_integer(msg, 'chanId')
+            chanKey = '_' + str(chanId)
+            channels = self._contextGet(contextId, 'channels')
+            if not(chanKey in list(channels.keys())):
+                self.emit('err', ExchangeError(self.id + ' msg received from unregistered channels:' + chanId))
+                return
+            symbol = channels[chanKey]['symbol']
+            event = channels[chanKey]['event']
+            # remove channel ids ?
+            self.omit(channels, chanKey)
+            self._contextSet(contextId, 'channels', channels)
+            self._websocket_process_pending_nonces(contextId, 'unsub-nonces', event, symbol, True, None)
+
+    def _websocket_subscribe(self, contextId, event, symbol, nonce, params={}):
+        if event != 'ob':
+            raise NotSupported('subscribe ' + event + '(' + symbol + ') not supported for exchange ' + self.id)
+        # save nonce for subscription response
+        symbolData = self._contextGetSymbolData(contextId, event, symbol)
+        if not('sub-nonces' in list(symbolData.keys())):
+            symbolData['sub-nonces'] = {}
+        symbolData['limit'] = self.safe_integer(params, 'limit', None)
+        nonceStr = str(nonce)
+        handle = self._setTimeout(self.timeout, self._websocketMethodMap('_websocketTimeoutRemoveNonce'), [contextId, nonceStr, event, symbol, 'sub-nonce'])
+        symbolData['sub-nonces'][nonceStr] = handle
+        self._contextSetSymbolData(contextId, event, symbol, symbolData)
+        # send request
+        id = self.market_id(symbol)
+        self.websocketSendJson({
+            'event': 'subscribe',
+            'channel': 'book',
+            'symbol': id,
+            'prec': 'P0',
+            'freq': 'F0',
+            'len': '100',
+        })
+
+    def _websocket_unsubscribe(self, contextId, event, symbol, nonce, params={}):
+        if event != 'ob':
+            raise NotSupported('unsubscribe ' + event + '(' + symbol + ') not supported for exchange ' + self.id)
+        symbolData = self._contextGetSymbolData(contextId, event, symbol)
+        payload = {
+            'event': 'unsubscribe',
+            'chanId': symbolData['channelId'],
+        }
+        if not('unsub-nonces' in list(symbolData.keys())):
+            symbolData['unsub-nonces'] = {}
+        nonceStr = str(nonce)
+        handle = self._setTimeout(self.timeout, self._websocketMethodMap('_websocketTimeoutRemoveNonce'), [contextId, nonceStr, event, symbol, 'unsub-nonces'])
+        symbolData['unsub-nonces'][nonceStr] = handle
+        self._contextSetSymbolData(contextId, event, symbol, symbolData)
+        self.websocketSendJson(payload)
+
+    def _websocket_timeout_remove_nonce(self, contextId, timerNonce, event, symbol, key):
+        symbolData = self._contextGetSymbolData(contextId, event, symbol)
+        if key in symbolData:
+            nonces = symbolData[key]
+            if timerNonce in nonces:
+                self.omit(symbolData[key], timerNonce)
+                self._contextSetSymbolData(contextId, event, symbol, symbolData)
+
+    def _get_current_websocket_orderbook(self, contextId, symbol, limit):
+        data = self._contextGetSymbolData(contextId, 'ob', symbol)
+        if ('ob' in list(data.keys())) and(data['ob'] is not None):
+            return self._cloneOrderBook(data['ob'], limit)
+        return None

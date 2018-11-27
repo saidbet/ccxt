@@ -103,6 +103,23 @@ class poloniex extends Exchange {
                     ),
                 ),
             ),
+            'wsconf' => array (
+                'conx-tpls' => array (
+                    'default' => array (
+                        'type' => 'ws',
+                        'baseurl' => 'wss://api2.poloniex.com',
+                    ),
+                ),
+                'events' => array (
+                    'ob' => array (
+                        'conx-tpl' => 'default',
+                        'conx-param' => array (
+                            'url' => '{baseurl}',
+                            'id' => '{id}',
+                        ),
+                    ),
+                ),
+            ),
             // Fees are tier-based. More info => https://poloniex.com/fees/
             // Rates below are highest possible.
             'fees' => array (
@@ -228,6 +245,119 @@ class poloniex extends Exchange {
         return $this->parse_ohlcvs($response, $market, $timeframe, $since, $limit);
     }
 
+    public function find_market ($string) {
+        if ($this->markets === null) {
+            throw new ExchangeError ($this->id . ' markets not loaded');
+        }
+        // $isNumeric = '/^\d+$/'.test($string);
+        // cannot transpile Number
+        // $isNumeric = !Number.isNaN ( intval ($string) );
+        // $isNumeric = intval ($string) ($string) === 'NaN';
+        $isNumeric = true;
+        if ($string) ($string !== $string) {
+            $string = ($string) $string;
+        }
+        $i = 0;
+        for ($i = 0; $i < count ($string); $i++) {
+            $c = $string[$i];
+            if ($c === '0') {
+                continue;
+            }
+            if ($c === '1') {
+                continue;
+            }
+            if ($c === '2') {
+                continue;
+            }
+            if ($c === '3') {
+                continue;
+            }
+            if ($c === '4') {
+                continue;
+            }
+            if ($c === '5') {
+                continue;
+            }
+            if ($c === '6') {
+                continue;
+            }
+            if ($c === '7') {
+                continue;
+            }
+            if ($c === '8') {
+                continue;
+            }
+            if ($c === '9') {
+                continue;
+            }
+            $isNumeric = false;
+            break;
+        }
+        if ($isNumeric === true) {
+            if (is_array ($this->markets_by_id2) && array_key_exists ($string, $this->markets_by_id2)) {
+                return $this->markets_by_id2[$string];
+            }
+        } else if (gettype ($string) === 'string') {
+            if (is_array ($this->markets_by_id) && array_key_exists ($string, $this->markets_by_id)) {
+                return $this->markets_by_id[$string];
+            }
+            if (is_array ($this->markets) && array_key_exists ($string, $this->markets)) {
+                return $this->markets[$string];
+            }
+        }
+        return $string;
+    }
+
+    public function set_markets ($markets, $currencies = null) {
+        // Poloniex uses an additional index for its curreny pairs
+        // id2 is string containing only numeric chars
+        // Calling parent::setMArkets does not transpile...
+        $this->marketsById2 = $this->index_by($markets, 'id2');
+        $this->markets_by_id2 = $this->marketsById2;
+        return parent::set_markets($markets, $currencies);
+        // Cannot use map
+        // $values = Object.values ($markets).map (market => array_replace_recursive (array (
+        //     'limits' => $this->limits,
+        //     'precision' => $this->precision,
+        // ), $this->fees['trading'], market))
+        // $this->marketsById2 = $this->index_by($markets, 'id2');
+        // $this->markets_by_id2 = $this->marketsById2;
+        // $this->markets = array_replace_recursive ($this->markets, $this->index_by($values, 'symbol'))
+        // $this->marketsById = $this->index_by($markets, 'id')
+        // $this->markets_by_id = $this->marketsById
+        // $this->symbols = is_array ($this->markets).sort () ? array_keys ($this->markets).sort () : array ()
+        // $this->ids = is_array ($this->markets_by_id).sort () ? array_keys ($this->markets_by_id).sort () : array ()
+        // if ($currencies) {
+        //     $this->currencies = array_replace_recursive ($currencies, $this->currencies)
+        // } else {
+        //     $baseCurrencies =
+        //         $values->filter (market => 'base' in market)
+        //             .map (market => (array (
+        //                 id => market.baseId || market.base,
+        //                 numericId => (market.baseNumericId !== null) ? market.baseNumericId : null,
+        //                 code => market.base,
+        //                 precision => market.precision ? (market.precision.base || market.precision.amount) : 8,
+        //             )))
+        //     $quoteCurrencies =
+        //         $values->filter (market => 'quote' in market)
+        //             .map (market => (array (
+        //                 id => market.quoteId || market.quote,
+        //                 numericId => (market.quoteNumericId !== null) ? market.quoteNumericId : null,
+        //                 code => market.quote,
+        //                 precision => market.precision ? (market.precision.quote || market.precision.price) : 8,
+        //             )))
+        //     $allCurrencies = $baseCurrencies->concat ($quoteCurrencies)
+        //     $groupedCurrencies = $this->group_by($allCurrencies, 'code')
+        //     $currencies = is_array ($groupedCurrencies) ? array_keys ($groupedCurrencies) : array ().map (code =>
+        //         $groupedCurrencies[code].reduce ((previous, current) =>
+        //             ((previous.precision > current.precision) ? previous : current), $groupedCurrencies[code][0]))
+        //     $sortedCurrencies = $this->sort_by(flatten ($currencies), 'code')
+        //     $this->currencies = array_replace_recursive ($this->index_by($sortedCurrencies, 'code'), $this->currencies)
+        // }
+        // $this->currencies_by_id = $this->index_by($this->currencies, 'id')
+        // return $this->markets
+    }
+
     public function fetch_markets () {
         $markets = $this->publicGetReturnTicker ();
         $keys = is_array ($markets) ? array_keys ($markets) : array ();
@@ -235,6 +365,7 @@ class poloniex extends Exchange {
         for ($p = 0; $p < count ($keys); $p++) {
             $id = $keys[$p];
             $market = $markets[$id];
+            // $id2 = (string) $market['id'];
             list ($quote, $base) = explode ('_', $id);
             $base = $this->common_currency_code($base);
             $quote = $this->common_currency_code($quote);
@@ -246,6 +377,7 @@ class poloniex extends Exchange {
             );
             $result[] = array_merge ($this->fees['trading'], array (
                 'id' => $id,
+                'id2' => (string) $market['id'],
                 'symbol' => $symbol,
                 'base' => $base,
                 'quote' => $quote,
@@ -1131,5 +1263,246 @@ class poloniex extends Exchange {
             }
             throw new ExchangeError ($feedback); // unknown $message
         }
+    }
+
+    public function _websocket_generate_url_stream ($events, $options) {
+        // $streamList = array ();
+        // for ($i = 0; $i < count ($events); $i++) {
+        //     $element = $events[$i];
+        //     $params = array (
+        //         'event' => $element['event'],
+        //         'symbol' => $this->_websocket_market_id ($element['symbol']),
+        //     );
+        //     $streamGenerator = $this->wsconf['events'][$element['event']]['conx-param']['stream'];
+        //     $streamList[] = $this->implode_params($streamGenerator, $params);
+        // }
+        // $stream = implode ('/', $streamList);
+        return $options['url'];
+    }
+
+    public function _websocket_market_id ($symbol) {
+        return strtolower ($this->market_id($symbol));
+    }
+
+    public function _websocket_on_message ($contextId, $data) {
+        $msg = json_decode ($data, $as_associative_array = true);
+        $channelId = $msg[0];
+        if ($channelId === 1000) {
+            // account notification (beta)
+            var_dump ('notification');
+        } else if ($channelId === 1002) {
+            // ticker $data
+            var_dump ('ticker');
+        } else if ($channelId === 1003) {
+            // 24 hour exchange volume
+            var_dump ('24 hour exchange volume');
+        } else if ($channelId === 1010) {
+            var_dump ($this->id . '._websocketOnMessage() heartbeat ' . $data);
+        } else {
+            // if $channelId is not one of the above, check if it is a marketId
+            $symbol = (string) $this->find_symbol($channelId);
+            if ($symbol === (string) $channelId) {
+                // Some error occured
+                $this->emit ('err', new ExchangeError ($this->id . '._websocketOnMessage() failed to get $symbol for $channelId => ' . $channelId));
+                $this->websocketClose ($contextId);
+            } else {
+                $this->_websocket_handle_ob ($contextId, $msg);
+            }
+        }
+    }
+
+    public function _websocket_handle_ob ($contextId, $data) {
+        // Poloniex calls this Price Aggregated Book
+        $channelId = $data[0];
+        $sequenceNumber = $data[1];
+        if (strlen ($data) > 2) {
+            $orderbook = $data[2];
+            $symbol = (string) $this->find_symbol($channelId);
+            $symbolData = $this->_contextGetSymbolData ($contextId, 'ob', $symbol);
+            // Check if this is the first response which contains full current $orderbook
+            if ($orderbook[0][0] === 'i') {
+                // $currencyPair = $orderbook[0][1]['currencyPair'];
+                $fullOrderbook = $orderbook[0][1]['orderBook'];
+                $asks = array ();
+                $bids = array ();
+                $keys = array ();
+                $i = 0;
+                $keys = is_array ($fullOrderbook[0]) ? array_keys ($fullOrderbook[0]) : array ();
+                for ($i = 0; $i < count ($keys); $i++) {
+                    $asks[] = [floatval ($keys[$i]), floatval ($fullOrderbook[0][$keys[$i]])];
+                }
+                $keys = is_array ($fullOrderbook[1]) ? array_keys ($fullOrderbook[1]) : array ();
+                for ($i = 0; $i < count ($keys); $i++) {
+                    $bids[] = [floatval ($keys[$i]), floatval ($fullOrderbook[1][$keys[$i]])];
+                }
+                $fullOrderbook = array (
+                    'asks' => $asks,
+                    'bids' => $bids,
+                    'isFrozen' => 0,
+                    'seq' => $sequenceNumber,
+                );
+                // I decided not to push the initial $orderbook to cache.
+                // This way is less consistent but I think it's easier.
+                $fullOrderbook = $this->parse_order_book($fullOrderbook);
+                $fullOrderbook = $this->_cloneOrderBook ($fullOrderbook, $symbolData['limit']);
+                $fullOrderbook['obLastSequenceNumber'] = $sequenceNumber;
+                $symbolData['ob'] = $fullOrderbook;
+                $this->_contextSetSymbolData ($contextId, 'ob', $symbol, $symbolData);
+                $this->emit ('ob', $symbol, $symbolData['ob']);
+            } else {
+                $order = null;
+                $orderbookDelta = array (
+                    'asks' => array (),
+                    'bids' => array (),
+                    'seq' => $sequenceNumber,
+                );
+                $price = 0.0;
+                $amount = 0.0;
+                $i = 0;
+                for ($i = 0; $i < count ($orderbook); $i++) {
+                    $order = $orderbook[$i];
+                    if ($order[0] === 'o') {
+                        $price = floatval ($order[2]);
+                        $amount = floatval ($order[3]);
+                        if ($order[1] === 0) {
+                            // sell $order
+                            $orderbookDelta['asks'][] = [$price, $amount];
+                        } else if ($order[1] === 1) {
+                            // buy $order
+                            $orderbookDelta['bids'][] = [$price, $amount];
+                        } else {
+                            // error
+                            $this->emit ('err', new ExchangeError ($this->id . '._websocketHandleOb() unknown value in buy/sell field. Expected 0 or 1 but got => ' . $order[1]));
+                            $this->websocketClose ($contextId);
+                            return;
+                        }
+                    } else if ($order[0] === 't') {
+                        // this is not an $order but a trade
+                        var_dump ($this->id . '._websocketHandleOb() skipping trade.');
+                        continue;
+                    } else {
+                        // unknown value
+                        $this->emit ('err', new ExchangeError ($this->id . '._websocketHandleOb() unknown value in $order/trade field. Expected \'o\' or \'t\' but got => ' . $order[0]));
+                        $this->websocketClose ($contextId);
+                        return;
+                    }
+                }
+                // Add to cache
+                $orderbookDelta = $this->parse_order_book($orderbookDelta);
+                if (($symbolData['obDeltaCache']) === null) {
+                    // This check is necessary because the obDeltaCache will be deleted on a call to fetchOrderBook()
+                    $symbolData['obDeltaCache'] = array (); // make empty cache
+                    $symbolData['obDeltaCacheSize'] = 0; // counting number of cached deltas
+                }
+                $symbolData['obDeltaCacheSize'] .= 1;
+                $sequenceNumberStr = (string) $sequenceNumber;
+                $symbolData['obDeltaCache'][$sequenceNumberStr] = $orderbookDelta;
+                // Schedule call to _websocketOrderBookDeltaCache()
+                $this->_websocket_handle_ob_delta_cache ($contextId, $symbol);
+                $this->emit ('ob', $symbol, $symbolData['ob']);
+            }
+        }
+    }
+
+    public function _websocket_handle_ob_delta_cache ($contextId, $symbol) {
+        $symbolData = $this->_contextGetSymbolData ($contextId, 'ob', $symbol);
+        // Handle out-of-order sequenceNumber
+        // To avoid a memory leak, we must put a maximum on the size of obDeltaCache.
+        // When this maximum is reached, we accept that we have lost some orderbook updates.
+        // In this case we must fetch a new orderbook.
+        // Alternatively, we could apply all cached deltas and keep going.
+        if ($symbolData['obDeltaCacheSize'] > $symbolData['obDeltaCacheSizeMax']) {
+            $symbolData['ob'] = $this->fetch_order_book($symbol, $symbolData['limit']);
+            // delete $symbolData['obDeltaCache'];
+            $symbolData['obDeltaCache'] = null;
+            $symbolData['obDeltaCacheSize'] = 0;
+            $this->_contextSetSymbolData ($contextId, 'ob', $symbol, $symbolData);
+            return;
+        }
+        if ($symbolData['obDeltaCacheSize'] === 0) {
+            $this->_contextSetSymbolData ($contextId, 'ob', $symbol, $symbolData);
+            return;
+        }
+        // if the cache exists
+        // check if the next sequenceNumber is in the cache
+        $fullOrderbook = $symbolData['ob'];
+        $lastSequenceNumber = $fullOrderbook['obLastSequenceNumber'];
+        $cachedSequenceNumber = $lastSequenceNumber . 1;
+        $cachedSequenceNumberStr = (string) $cachedSequenceNumber;
+        $orderbookDelta = $symbolData['obDeltaCache'][$cachedSequenceNumberStr];
+        $continueBool = $orderbookDelta !== null;
+        // While loop is not transpiled properly
+        // while ($continueBool) {
+        $nkeys = $symbolData['obDeltaCacheSize'];
+        $i = 0;
+        for ($i = 0; $i < $nkeys; $i++) {
+            if (!$continueBool) {
+                break;
+            }
+            $symbolData['obDeltaCache'][$cachedSequenceNumberStr] = null;
+            $fullOrderbook = $this->mergeOrderBookDelta ($symbolData['ob'], $orderbookDelta);
+            $fullOrderbook = $this->_cloneOrderBook ($fullOrderbook, $symbolData['limit']);
+            $fullOrderbook['obLastSequenceNumber'] = $cachedSequenceNumber;
+            $symbolData['ob'] = $fullOrderbook;
+            $cachedSequenceNumber .= 1;
+            $orderbookDelta = $symbolData['obDeltaCache'][$cachedSequenceNumberStr];
+            $continueBool = $orderbookDelta !== null;
+            $symbolData['obDeltaCacheSize'] -= 1;
+        }
+        $this->_contextSetSymbolData ($contextId, 'ob', $symbol, $symbolData);
+    }
+
+    public function _websocket_subscribe_ob ($contextId, $event, $symbol, $nonce, $params = array ()) {
+        $symbolData = $this->_contextGetSymbolData ($contextId, 'ob', $symbol);
+        $symbolData['limit'] = $this->safe_integer($params, 'limit', null);
+        $symbolData['obDeltaCache'] = null;
+        $symbolData['obDeltaCacheSize'] = 0;
+        $symbolData['obDeltaCacheSizeMax'] = $this->safe_integer($params, 'obDeltaCacheSizeMax', 10);
+        $this->_contextSetSymbolData ($contextId, 'ob', $symbol, $symbolData);
+        //
+        $market = $this->market_id($symbol);
+        //
+        $payload = array (
+            'command' => 'subscribe',
+            'channel' => $market,
+        );
+        $nonceStr = (string) $nonce;
+        $this->emit ($nonceStr, true);
+        $this->websocketSendJson ($payload);
+    }
+
+    public function _websocket_subscribe ($contextId, $event, $symbol, $nonce, $params = array ()) {
+        if ($event === 'ob') {
+            $this->_websocket_subscribe_ob ($contextId, $event, $symbol, $nonce, $params);
+        } else {
+            throw new NotSupported ('subscribe ' . $event . '(' . $symbol . ') not supported for exchange ' . $this->id);
+        }
+    }
+
+    public function _websocket_unsubscribe_ob ($conxid, $event, $symbol, $nonce, $params) {
+        $market = $this->market_id($symbol);
+        $payload = array (
+            'command' => 'unsubscribe',
+            'channel' => $market,
+        );
+        $nonceStr = (string) $nonce;
+        $this->emit ($nonceStr, true);
+        $this->websocketSendJson ($payload);
+    }
+
+    public function _websocket_unsubscribe ($conxid, $event, $symbol, $nonce, $params) {
+        if ($event === 'ob') {
+            $this->_websocket_unsubscribe_ob ($conxid, $event, $symbol, $nonce, $params);
+        } else {
+            throw new NotSupported ('subscribe ' . $event . '(' . $symbol . ') not supported for exchange ' . $this->id);
+        }
+    }
+
+    public function _get_current_websocket_orderbook ($contextId, $symbol, $limit) {
+        $data = $this->_contextGetSymbolData ($contextId, 'ob', $symbol);
+        if ((is_array ($data) && array_key_exists ('ob', $data)) && ($data['ob'] !== null)) {
+            return $this->_cloneOrderBook ($data['ob'], $limit);
+        }
+        return null;
     }
 }

@@ -148,6 +148,23 @@ class huobipro extends Exchange {
                 'createOrderMethod' => 'privatePostOrderOrdersPlace',
                 'language' => 'en-US',
             ),
+            'wsconf' => array (
+                'conx-tpls' => array (
+                    'default' => array (
+                        'type' => 'ws',
+                        'baseurl' => 'wss://api.huobi.pro/ws',
+                    ),
+                ),
+                'events' => array (
+                    'ob' => array (
+                        'conx-tpl' => 'default',
+                        'conx-param' => array (
+                            'url' => '{baseurl}',
+                            'id' => '{id}',
+                        ),
+                    ),
+                ),
+            ),
         ));
     }
 
@@ -918,5 +935,97 @@ class huobipro extends Exchange {
                 }
             }
         }
+    }
+
+    public function _websocket_on_message ($contextId, $data) {
+        // TODO => pako function in Exchange.js/.py/.php
+        // var_dump($data);
+        $text = $this->gunzip ($data);
+        // $text = pako.inflate ($data, array ( 'to' => 'string', ));
+        // var_dump ($text);
+        $msg = json_decode ($text, $as_associative_array = true);
+        $ping = $this->safe_value($msg, 'ping');
+        $tick = $this->safe_value($msg, 'tick');
+        if ($ping !== null) {
+            // heartbeat $ping-pong
+            $sendJson = array (
+                'pong' => $msg['ping'],
+            );
+            $this->websocketSendJson ($sendJson);
+        } else if ($tick !== null) {
+            // var_dump($msg);
+            $this->_websocket_dispatch ($contextId, $msg);
+        }
+        //  else :remove var_dump($text);
+    }
+
+    public function _websocket_dispatch ($contextId, $data) {
+        // var_dump('received', $data->ch, 'data.ts', $data->ts, 'crawler.ts', moment().format('x'));
+        $vals = explode ('.', $data->ch);
+        $rawsymbol = $vals[1];
+        $channel = $vals[2];
+        // :$symbol
+        $symbol = $this->marketsById[$rawsymbol].symbol;
+        // $channel = $data->ch.split('.')[2];
+        if ($channel === 'depth') {
+            // :$ob emit
+            // var_dump('ob', $data->tick);
+            // orderbook[$symbol] = $data->tick;
+            $timestamp = $this->safe_value($data, 'ts');
+            $obdata = $this->safe_value($data, 'tick');
+            $ob = $this->parse_order_book($obdata, $timestamp);
+            $symbolData = $this->_contextGetSymbolData ($contextId, 'ob', $symbol);
+            $symbolData['ob'] = $ob;
+            $this->_contextSetSymbolData ($contextId, 'ob', $symbol, $symbolData);
+            // note, huobipro limit != depth
+            $this->emit ('ob', $symbol, $this->_cloneOrderBook ($symbolData['ob'], $symbolData['limit']));
+        }
+        // TODO:kline
+        // var_dump('kline', $data->tick);
+    }
+
+    public function _websocket_subscribe ($contextId, $event, $symbol, $nonce, $params = array ()) {
+        if ($event !== 'ob') {
+            throw new NotSupported ('subscribe ' . $event . '(' . $symbol . ') not supported for exchange ' . $this->id);
+        }
+        $params['depth'] = $params['depth'] || '2';
+        $data = $this->_contextGetSymbolData ($contextId, $event, $symbol);
+        // depth from 0 to 5
+        // see https://github.com/huobiapi/API_Docs/wiki/WS_api_reference#%E8%AE%A2%E9%98%85-market-depth-%E6%95%B0%E6%8D%AE-marketsymboldepthtype
+        $data['depth'] = $params['depth'];
+        // it is not limit
+        $data['limit'] = $params['limit'] || 100;
+        $this->_contextSetSymbolData ($contextId, $event, $symbol, $data);
+        $rawsymbol = $this->market_id($symbol);
+        $sendJson = array (
+            'sub' => 'market.' . $rawsymbol . '.depth.step' . $params['depth'],
+            'id' => $rawsymbol,
+        );
+        $this->websocketSendJson ($sendJson);
+        $nonceStr = (string) $nonce;
+        $this->emit ($nonceStr, true);
+    }
+
+    public function _websocket_unsubscribe ($contextId, $event, $symbol, $nonce, $params = array ()) {
+        if ($event !== 'ob') {
+            throw new NotSupported ('unsubscribe ' . $event . '(' . $symbol . ') not supported for exchange ' . $this->id);
+        }
+        $params['depth'] = $params['depth'] || '2';
+        $rawsymbol = $this->market_id($symbol);
+        $sendJson = array (
+            'unsub' => 'market.' . $rawsymbol . '.depth.step' . $params['depth'],
+            'id' => $rawsymbol,
+        );
+        $this->websocketSendJson ($sendJson);
+        $nonceStr = (string) $nonce;
+        $this->emit ($nonceStr, true);
+    }
+
+    public function _get_current_websocket_orderbook ($contextId, $symbol, $limit) {
+        $data = $this->_contextGetSymbolData ($contextId, 'ob', $symbol);
+        if (is_array ($data && $data['ob'] !== null) && array_key_exists ('ob', $data && $data['ob'] !== null)) {
+            return $this->_cloneOrderBook ($data['ob'], $limit);
+        }
+        return null;
     }
 }

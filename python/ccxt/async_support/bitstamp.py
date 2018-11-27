@@ -171,6 +171,26 @@ class bitstamp (Exchange):
                 'Your account is frozen': PermissionDenied,
                 'Please update your profile with your FATCA information, before using API.': PermissionDenied,
             },
+            'wsconf': {
+                'conx-tpls': {
+                    'default': {
+                        'type': 'pusher',
+                        'baseurl': 'wss://ws-mt1.pusher.com:443/app/de504dc5763aeef9ff52',
+                    },
+                },
+                'methodmap': {
+                    '_websocketTimeoutRemoveNonce': '_websocketTimeoutRemoveNonce',
+                },
+                'events': {
+                    'ob': {
+                        'conx-tpl': 'default',
+                        'conx-param': {
+                            'url': '{baseurl}',
+                            'id': '{id}',
+                        },
+                    },
+                },
+            },
         })
 
     async def fetch_markets(self):
@@ -826,3 +846,87 @@ class bitstamp (Exchange):
                     if code == 'API0005':
                         raise AuthenticationError(self.id + ' invalid signature, use the uid for the main account if you have subaccounts')
                 raise ExchangeError(self.id + ' ' + body)
+
+    def _websocket_on_message(self, contextId, data):
+        msg = json.loads(data)
+        # console.log(data)
+        evt = self.safe_string(msg, 'event')
+        if evt == 'subscription_succeeded':
+            self._websocket_handle_subscription(contextId, msg)
+        elif evt == 'data':
+            chan = self.safe_string(msg, 'channel')
+            if chan.find('order_book_') >= 0:
+                self._websocket_handle_orderbook(contextId, msg)
+
+    def _websocket_handle_orderbook(self, contextId, msg):
+        chan = self.safe_string(msg, 'channel')
+        parts = chan.split('_')
+        symbol = self.find_symbol(parts[2])
+        data = self.safe_value(msg, 'data')
+        timestamp = self.safe_integer(data, 'timestamp')
+        ob = self.parse_order_book(data, timestamp)
+        symbolData = self._contextGetSymbolData(contextId, 'ob', symbol)
+        symbolData['ob'] = ob
+        self.emit('ob', symbol, self._cloneOrderBook(ob, symbolData['limit']))
+        self._contextSetSymbolData(contextId, 'ob', symbol, symbolData)
+
+    def _websocket_handle_subscription(self, contextId, msg):
+        chan = self.safe_string(msg, 'channel')
+        if chan.find('order_book_') >= 0:
+            parts = chan.split('_')
+            symbol = self.find_symbol(parts[2])
+            symbolData = self._contextGetSymbolData(contextId, 'ob', symbol)
+            if 'sub-nonces' in symbolData:
+                nonces = symbolData['sub-nonces']
+                keys = list(nonces.keys())
+                for i in range(0, len(keys)):
+                    nonce = keys[i]
+                    self._cancelTimeout(nonces[nonce])
+                    self.emit(nonce, True)
+                symbolData['sub-nonces'] = {}
+                self._contextSetSymbolData(contextId, 'ob', symbol, symbolData)
+
+    def _websocket_subscribe(self, contextId, event, symbol, nonce, params={}):
+        if event != 'ob':
+            raise NotSupported('subscribe ' + event + '(' + symbol + ') not supported for exchange ' + self.id)
+        # save nonce for subscription response
+        symbolData = self._contextGetSymbolData(contextId, event, symbol)
+        if not('sub-nonces' in list(symbolData.keys())):
+            symbolData['sub-nonces'] = {}
+        symbolData['limit'] = self.safe_integer(params, 'limit', None)
+        nonceStr = str(nonce)
+        handle = self._setTimeout(self.timeout, self._websocketMethodMap('_websocketTimeoutRemoveNonce'), [contextId, nonceStr, event, symbol, 'sub-nonce'])
+        symbolData['sub-nonces'][nonceStr] = handle
+        self._contextSetSymbolData(contextId, event, symbol, symbolData)
+        # send request
+        id = self.market_id(symbol)
+        self.websocketSendJson({
+            'event': 'subscribe',
+            'channel': 'order_book_' + id,
+        }, contextId)
+
+    def _websocket_unsubscribe(self, contextId, event, symbol, nonce, params={}):
+        if event != 'ob':
+            raise NotSupported('unsubscribe ' + event + '(' + symbol + ') not supported for exchange ' + self.id)
+        id = self.market_id(symbol)
+        payload = {
+            'event': 'unsubscribe',
+            'channel': 'order_book_' + id,
+        }
+        self.websocketSendJson(payload)
+        nonceStr = str(nonce)
+        self.emit(nonceStr, True)
+
+    def _websocket_timeout_remove_nonce(self, contextId, timerNonce, event, symbol, key):
+        symbolData = self._contextGetSymbolData(contextId, event, symbol)
+        if key in symbolData:
+            nonces = symbolData[key]
+            if timerNonce in nonces:
+                self.omit(symbolData[key], timerNonce)
+                self._contextSetSymbolData(contextId, event, symbol, symbolData)
+
+    def _get_current_websocket_orderbook(self, contextId, symbol, limit):
+        data = self._contextGetSymbolData(contextId, 'ob', symbol)
+        if ('ob' in list(data.keys())) and(data['ob'] is not None):
+            return self._cloneOrderBook(data['ob'], limit)
+        return None

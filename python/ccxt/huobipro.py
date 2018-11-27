@@ -19,6 +19,7 @@ from ccxt.base.errors import AuthenticationError
 from ccxt.base.errors import InsufficientFunds
 from ccxt.base.errors import InvalidOrder
 from ccxt.base.errors import OrderNotFound
+from ccxt.base.errors import NotSupported
 from ccxt.base.errors import ExchangeNotAvailable
 
 
@@ -162,6 +163,23 @@ class huobipro (Exchange):
                 'fetchBalanceMethod': 'privateGetAccountAccountsIdBalance',
                 'createOrderMethod': 'privatePostOrderOrdersPlace',
                 'language': 'en-US',
+            },
+            'wsconf': {
+                'conx-tpls': {
+                    'default': {
+                        'type': 'ws',
+                        'baseurl': 'wss://api.huobi.pro/ws',
+                    },
+                },
+                'events': {
+                    'ob': {
+                        'conx-tpl': 'default',
+                        'conx-param': {
+                            'url': '{baseurl}',
+                            'id': '{id}',
+                        },
+                    },
+                },
             },
         })
 
@@ -846,3 +864,85 @@ class huobipro (Exchange):
                     if code in exceptions:
                         raise exceptions[code](feedback)
                     raise ExchangeError(feedback)
+
+    def _websocket_on_message(self, contextId, data):
+        # TODO: pako function in Exchange.js/.py/.php
+        # console.log(data)
+        text = self.gunzip(data)
+        # text = pako.inflate(data, {'to': 'string',})
+        # print(text)
+        msg = json.loads(text)
+        ping = self.safe_value(msg, 'ping')
+        tick = self.safe_value(msg, 'tick')
+        if ping is not None:
+            # heartbeat ping-pong
+            sendJson = {
+                'pong': msg['ping'],
+            }
+            self.websocketSendJson(sendJson)
+        elif tick is not None:
+            # console.log(msg)
+            self._websocket_dispatch(contextId, msg)
+        #  else :remove console.log(text)
+
+    def _websocket_dispatch(self, contextId, data):
+        # console.log('received', data.ch, 'data.ts', data.ts, 'crawler.ts', moment().format('x'))
+        vals = data.ch.split('.')
+        rawsymbol = vals[1]
+        channel = vals[2]
+        # :symbol
+        symbol = self.marketsById[rawsymbol].symbol
+        # channel = data.ch.split('.')[2]
+        if channel == 'depth':
+            # :ob emit
+            # console.log('ob', data.tick)
+            # orderbook[symbol] = data.tick
+            timestamp = self.safe_value(data, 'ts')
+            obdata = self.safe_value(data, 'tick')
+            ob = self.parse_order_book(obdata, timestamp)
+            symbolData = self._contextGetSymbolData(contextId, 'ob', symbol)
+            symbolData['ob'] = ob
+            self._contextSetSymbolData(contextId, 'ob', symbol, symbolData)
+            # note, huobipro limit != depth
+            self.emit('ob', symbol, self._cloneOrderBook(symbolData['ob'], symbolData['limit']))
+        # TODO:kline
+        # console.log('kline', data.tick)
+
+    def _websocket_subscribe(self, contextId, event, symbol, nonce, params={}):
+        if event != 'ob':
+            raise NotSupported('subscribe ' + event + '(' + symbol + ') not supported for exchange ' + self.id)
+        params['depth'] = params['depth'] or '2'
+        data = self._contextGetSymbolData(contextId, event, symbol)
+        # depth from 0 to 5
+        # see https://github.com/huobiapi/API_Docs/wiki/WS_api_reference#%E8%AE%A2%E9%98%85-market-depth-%E6%95%B0%E6%8D%AE-marketsymboldepthtype
+        data['depth'] = params['depth']
+        # it is not limit
+        data['limit'] = params['limit'] or 100
+        self._contextSetSymbolData(contextId, event, symbol, data)
+        rawsymbol = self.market_id(symbol)
+        sendJson = {
+            'sub': 'market.' + rawsymbol + '.depth.step' + params['depth'],
+            'id': rawsymbol,
+        }
+        self.websocketSendJson(sendJson)
+        nonceStr = str(nonce)
+        self.emit(nonceStr, True)
+
+    def _websocket_unsubscribe(self, contextId, event, symbol, nonce, params={}):
+        if event != 'ob':
+            raise NotSupported('unsubscribe ' + event + '(' + symbol + ') not supported for exchange ' + self.id)
+        params['depth'] = params['depth'] or '2'
+        rawsymbol = self.market_id(symbol)
+        sendJson = {
+            'unsub': 'market.' + rawsymbol + '.depth.step' + params['depth'],
+            'id': rawsymbol,
+        }
+        self.websocketSendJson(sendJson)
+        nonceStr = str(nonce)
+        self.emit(nonceStr, True)
+
+    def _get_current_websocket_orderbook(self, contextId, symbol, limit):
+        data = self._contextGetSymbolData(contextId, 'ob', symbol)
+        if 'ob' in data and data['ob'] is not None:
+            return self._cloneOrderBook(data['ob'], limit)
+        return None
