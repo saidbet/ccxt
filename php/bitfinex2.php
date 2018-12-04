@@ -585,13 +585,22 @@ class bitfinex2 extends bitfinex {
                 $price = $record[0];
                 $c = $record[1];
                 $amount = $record[2];
-                $side = ($amount > 0) ? 'bids' : 'asks';
+                $side = null;
+                $isBid = null;
+                if ($amount > 0) {
+                    $side = 'bids';
+                    $isBid = true;
+                } else {
+                    $side = 'asks'
+                    $isBid = false;
+                    $amount = -$amount;
+                }
                 if ($c === 0) {
                     // remove
-                    $this->updateBidAsk ([$price, 0], $symbolData['ob'][$side], $amount > 0);
+                    $this->updateBidAsk ([$price, 0], $symbolData['ob'][$side], $isBid);
                 } else {
                     // update
-                    $this->updateBidAsk ([$price, $amount], $symbolData['ob'][$side], $amount > 0);
+                    $this->updateBidAsk ([$price, $amount], $symbolData['ob'][$side], $isBid);
                 }
             }
         } else {
@@ -599,13 +608,22 @@ class bitfinex2 extends bitfinex {
             $price = $data[0];
             $c = $data[1];
             $amount = $data[2];
-            $side = ($amount > 0) ? 'bids' : 'asks';
+            $side = null;
+            $isBid = null;
+            if ($amount > 0) {
+                $side = 'bids';
+                $isBid = true;
+            } else {
+                $side = 'asks'
+                $isBid = false;
+                $amount = -$amount;
+            }
             if ($c === 0) {
                 // remove
-                $this->updateBidAsk ([$price, 0], $symbolData['ob'][$side], $amount > 0);
+                $this->updateBidAsk ([$price, 0], $symbolData['ob'][$side], $isBid);
             } else {
                 // update
-                $this->updateBidAsk ([$price, $amount], $symbolData['ob'][$side], $amount > 0);
+                $this->updateBidAsk ([$price, $amount], $symbolData['ob'][$side], $isBid);
             }
         }
         $this->emit ('ob', $symbol, $this->_cloneOrderBook ($symbolData['ob'], $symbolData['limit']));
