@@ -119,6 +119,7 @@ class phemex(Exchange):
                         'exchange/spot/order/trades',  # ?symbol=<symbol>&start=<start>&end=<end>&limit=<limit>&offset=<offset>
                         # swap
                         'accounts/accountPositions',  # ?currency=<currency>
+                        'accounts/positions',  # ?currency=<currency>
                         'orders/activeList',  # ?symbol=<symbol>
                         'exchange/order/list',  # ?symbol=<symbol>&start=<start>&end=<end>&offset=<offset>&limit=<limit>&ordStatus=<ordStatus>&withCount=<withCount>
                         'exchange/order',  # ?symbol=<symbol>&orderID=<orderID1,orderID2>
@@ -320,12 +321,12 @@ class phemex(Exchange):
             },
         })
 
-    def parse_safe_float(self, value=None):
+    def parse_safe_number(self, value=None):
         if value is None:
             return value
         value = value.replace(',', '')
         parts = value.split(' ')
-        return self.safe_float(parts, 0)
+        return self.safe_number(parts, 0)
 
     def parse_swap_market(self, market):
         #
@@ -348,7 +349,9 @@ class phemex(Exchange):
         #         "minPriceEp":5000,
         #         "maxPriceEp":10000000000,
         #         "maxOrderQty":1000000,
-        #         "type":"Perpetual"
+        #         "type":"Perpetual",
+        #         "status":"Listed",
+        #         "tipOrderQty":1000000,
         #         "steps":"50",
         #         "riskLimits":[
         #             {"limit":100,"initialMargin":"1.0%","initialMarginEr":1000000,"maintenanceMargin":"0.5%","maintenanceMarginEr":500000},
@@ -373,7 +376,7 @@ class phemex(Exchange):
         #     }
         #
         id = self.safe_string(market, 'symbol')
-        baseId = self.safe_string(market, 'baseCurrency', 'contractUnderlyingAssets')
+        baseId = self.safe_string_2(market, 'baseCurrency', 'contractUnderlyingAssets')
         quoteId = self.safe_string(market, 'quoteCurrency')
         base = self.safe_currency_code(baseId)
         quote = self.safe_currency_code(quoteId)
@@ -389,16 +392,16 @@ class phemex(Exchange):
             inverse = True
         linear = not inverse
         precision = {
-            'amount': self.safe_float(market, 'lotSize'),
-            'price': self.safe_float(market, 'tickSize'),
+            'amount': self.safe_number(market, 'lotSize'),
+            'price': self.safe_number(market, 'tickSize'),
         }
         priceScale = self.safe_integer(market, 'priceScale')
         ratioScale = self.safe_integer(market, 'ratioScale')
         valueScale = self.safe_integer(market, 'valueScale')
-        minPriceEp = self.safe_float(market, 'minPriceEp')
-        maxPriceEp = self.safe_float(market, 'maxPriceEp')
-        makerFeeRateEr = self.safe_float(market, 'makerFeeRateEr')
-        takerFeeRateEr = self.safe_float(market, 'takerFeeRateEr')
+        minPriceEp = self.safe_number(market, 'minPriceEp')
+        maxPriceEp = self.safe_number(market, 'maxPriceEp')
+        makerFeeRateEr = self.safe_number(market, 'makerFeeRateEr')
+        takerFeeRateEr = self.safe_number(market, 'takerFeeRateEr')
         if makerFeeRateEr is not None:
             maker = self.from_en(makerFeeRateEr, ratioScale, 0.00000001)
         if takerFeeRateEr is not None:
@@ -414,10 +417,11 @@ class phemex(Exchange):
             },
             'cost': {
                 'min': None,
-                'max': self.parse_safe_float(self.safe_string(market, 'maxOrderQty')),
+                'max': self.parse_safe_number(self.safe_string(market, 'maxOrderQty')),
             },
         }
-        active = None
+        status = self.safe_string(market, 'status')
+        active = status == 'Listed'
         return {
             'id': id,
             'symbol': symbol,
@@ -465,7 +469,9 @@ class phemex(Exchange):
         #         "defaultMakerFee":"0.001",
         #         "defaultMakerFeeEr":100000,
         #         "baseQtyPrecision":6,
-        #         "quoteQtyPrecision":2
+        #         "quoteQtyPrecision":2,
+        #         "status":"Listed",
+        #         "tipOrderQty":20
         #     }
         #
         type = self.safe_string_lower(market, 'type')
@@ -476,30 +482,31 @@ class phemex(Exchange):
         inverse = None
         spot = True
         swap = False
-        taker = self.safe_float(market, 'defaultTakerFee')
-        maker = self.safe_float(market, 'defaultMakerFee')
+        taker = self.safe_number(market, 'defaultTakerFee')
+        maker = self.safe_number(market, 'defaultMakerFee')
         precision = {
-            'amount': self.parse_safe_float(self.safe_string(market, 'baseTickSize')),
-            'price': self.parse_safe_float(self.safe_string(market, 'quoteTickSize')),
+            'amount': self.parse_safe_number(self.safe_string(market, 'baseTickSize')),
+            'price': self.parse_safe_number(self.safe_string(market, 'quoteTickSize')),
         }
         limits = {
             'amount': {
                 'min': precision['amount'],
-                'max': self.parse_safe_float(self.safe_string(market, 'maxBaseOrderSize')),
+                'max': self.parse_safe_number(self.safe_string(market, 'maxBaseOrderSize')),
             },
             'price': {
                 'min': precision['price'],
                 'max': None,
             },
             'cost': {
-                'min': self.parse_safe_float(self.safe_string(market, 'minOrderValue')),
-                'max': self.parse_safe_float(self.safe_string(market, 'maxOrderValue')),
+                'min': self.parse_safe_number(self.safe_string(market, 'minOrderValue')),
+                'max': self.parse_safe_number(self.safe_string(market, 'maxOrderValue')),
             },
         }
         base = self.safe_currency_code(baseId)
         quote = self.safe_currency_code(quoteId)
         symbol = base + '/' + quote
-        active = None
+        status = self.safe_string(market, 'status')
+        active = status == 'Listed'
         return {
             'id': id,
             'symbol': symbol,
@@ -685,8 +692,8 @@ class phemex(Exchange):
             name = self.safe_string(currency, 'name')
             code = self.safe_currency_code(id)
             valueScale = self.safe_integer(currency, 'valueScale')
-            minValueEv = self.safe_float(currency, 'minValueEv')
-            maxValueEv = self.safe_float(currency, 'maxValueEv')
+            minValueEv = self.safe_number(currency, 'minValueEv')
+            maxValueEv = self.safe_number(currency, 'maxValueEv')
             minAmount = None
             maxAmount = None
             precision = None
@@ -710,14 +717,6 @@ class phemex(Exchange):
                         'min': minAmount,
                         'max': maxAmount,
                     },
-                    'price': {
-                        'min': None,
-                        'max': None,
-                    },
-                    'cost': {
-                        'min': None,
-                        'max': None,
-                    },
                     'withdraw': {
                         'min': None,
                         'max': None,
@@ -730,11 +729,11 @@ class phemex(Exchange):
     def parse_bid_ask(self, bidask, priceKey=0, amountKey=1, market=None):
         if market is None:
             raise ArgumentsRequired(self.id + ' parseBidAsk() requires a market argument')
-        amount = self.safe_float(bidask, amountKey)
+        amount = self.safe_number(bidask, amountKey)
         if market['spot']:
             amount = self.from_ev(amount, market)
         return [
-            self.from_ep(self.safe_float(bidask, priceKey), market),
+            self.from_ep(self.safe_number(bidask, priceKey), market),
             amount,
         ]
 
@@ -849,15 +848,15 @@ class phemex(Exchange):
         #
         baseVolume = None
         if (market is not None) and market['spot']:
-            baseVolume = self.from_ev(self.safe_float(ohlcv, 7), market)
+            baseVolume = self.from_ev(self.safe_number(ohlcv, 7), market)
         else:
             baseVolume = self.safe_integer(ohlcv, 7)
         return [
             self.safe_timestamp(ohlcv, 0),
-            self.from_ep(self.safe_float(ohlcv, 3), market),
-            self.from_ep(self.safe_float(ohlcv, 4), market),
-            self.from_ep(self.safe_float(ohlcv, 5), market),
-            self.from_ep(self.safe_float(ohlcv, 6), market),
+            self.from_ep(self.safe_number(ohlcv, 3), market),
+            self.from_ep(self.safe_number(ohlcv, 4), market),
+            self.from_ep(self.safe_number(ohlcv, 5), market),
+            self.from_ep(self.safe_number(ohlcv, 6), market),
             baseVolume,
         ]
 
@@ -946,18 +945,18 @@ class phemex(Exchange):
         marketId = self.safe_string(ticker, 'symbol')
         symbol = self.safe_symbol(marketId, market)
         timestamp = self.safe_integer_product(ticker, 'timestamp', 0.000001)
-        last = self.from_ep(self.safe_float(ticker, 'lastEp'), market)
-        quoteVolume = self.from_ep(self.safe_float(ticker, 'turnoverEv'), market)
-        baseVolume = self.safe_float(ticker, 'volume')
+        last = self.from_ep(self.safe_number(ticker, 'lastEp'), market)
+        quoteVolume = self.from_ep(self.safe_number(ticker, 'turnoverEv'), market)
+        baseVolume = self.safe_number(ticker, 'volume')
         if baseVolume is None:
-            baseVolume = self.from_ev(self.safe_float(ticker, 'volumeEv'))
+            baseVolume = self.from_ev(self.safe_number(ticker, 'volumeEv'))
         vwap = None
         if (market is not None) and (market['spot']):
             vwap = self.vwap(baseVolume, quoteVolume)
         change = None
         percentage = None
         average = None
-        open = self.from_ep(self.safe_float(ticker, 'openEp'), market)
+        open = self.from_ep(self.safe_number(ticker, 'openEp'), market)
         if (open is not None) and (last is not None):
             change = last - open
             if open > 0:
@@ -967,11 +966,11 @@ class phemex(Exchange):
             'symbol': symbol,
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
-            'high': self.from_ep(self.safe_float(ticker, 'highEp'), market),
-            'low': self.from_ep(self.safe_float(ticker, 'lowEp'), market),
-            'bid': self.from_ep(self.safe_float(ticker, 'bidEp'), market),
+            'high': self.from_ep(self.safe_number(ticker, 'highEp'), market),
+            'low': self.from_ep(self.safe_number(ticker, 'lowEp'), market),
+            'bid': self.from_ep(self.safe_number(ticker, 'bidEp'), market),
             'bidVolume': None,
-            'ask': self.from_ep(self.safe_float(ticker, 'askEp'), market),
+            'ask': self.from_ep(self.safe_number(ticker, 'askEp'), market),
             'askVolume': None,
             'vwap': vwap,
             'open': open,
@@ -1158,8 +1157,8 @@ class phemex(Exchange):
             if tradeLength > 4:
                 id = self.safe_string(trade, tradeLength - 4)
             side = self.safe_string_lower(trade, tradeLength - 3)
-            price = self.from_ep(self.safe_float(trade, tradeLength - 2), market)
-            amount = self.from_ev(self.safe_float(trade, tradeLength - 1), market)
+            price = self.from_ep(self.safe_number(trade, tradeLength - 2), market)
+            amount = self.from_ev(self.safe_number(trade, tradeLength - 1), market)
             if market['spot']:
                 if (price is not None) and (amount is not None):
                     cost = price * amount
@@ -1172,14 +1171,14 @@ class phemex(Exchange):
             execStatus = self.safe_string(trade, 'execStatus')
             if execStatus == 'MakerFill':
                 takerOrMaker = 'maker'
-            price = self.from_ep(self.safe_float(trade, 'execPriceEp'), market)
-            amount = self.from_ev(self.safe_float(trade, 'execBaseQtyEv'), market)
-            amount = self.safe_float(trade, 'execQty', amount)
-            cost = self.from_ev(self.safe_float_2(trade, 'execQuoteQtyEv', 'execValueEv'), market)
-            feeCost = self.from_ev(self.safe_float(trade, 'execFeeEv'), market)
+            price = self.from_ep(self.safe_number(trade, 'execPriceEp'), market)
+            amount = self.from_ev(self.safe_number(trade, 'execBaseQtyEv'), market)
+            amount = self.safe_number(trade, 'execQty', amount)
+            cost = self.from_ev(self.safe_number_2(trade, 'execQuoteQtyEv', 'execValueEv'), market)
+            feeCost = self.from_ev(self.safe_number(trade, 'execFeeEv'), market)
             if feeCost is not None:
                 feeRate = None
-                feeRateEr = self.safe_float(trade, 'feeRateEr')
+                feeRateEr = self.safe_number(trade, 'feeRateEr')
                 if feeRateEr < 0:
                     feeRateEr = abs(feeRateEr)
                     feeRate = self.from_er(feeRateEr, market)
@@ -1249,9 +1248,9 @@ class phemex(Exchange):
             currency = self.safe_value(self.currencies, code, {})
             scale = self.safe_integer(currency, 'valueScale', 8)
             account = self.account()
-            balanceEv = self.safe_float(balance, 'balanceEv')
-            lockedTradingBalanceEv = self.safe_float(balance, 'lockedTradingBalanceEv')
-            lockedWithdrawEv = self.safe_float(balance, 'lockedWithdrawEv')
+            balanceEv = self.safe_number(balance, 'balanceEv')
+            lockedTradingBalanceEv = self.safe_number(balance, 'lockedTradingBalanceEv')
+            lockedWithdrawEv = self.safe_number(balance, 'lockedWithdrawEv')
             total = self.from_en(balanceEv, scale, scale, DECIMAL_PLACES)
             lockedTradingBalance = self.from_en(lockedTradingBalanceEv, scale, scale, DECIMAL_PLACES)
             lockedWithdraw = self.from_en(lockedWithdrawEv, scale, scale, DECIMAL_PLACES)
@@ -1343,8 +1342,8 @@ class phemex(Exchange):
         code = self.safe_currency_code(currencyId)
         currency = self.currency(code)
         account = self.account()
-        accountBalanceEv = self.safe_float(balance, 'accountBalanceEv')
-        totalUsedBalanceEv = self.safe_float(balance, 'totalUsedBalanceEv')
+        accountBalanceEv = self.safe_number(balance, 'accountBalanceEv')
+        totalUsedBalanceEv = self.safe_number(balance, 'totalUsedBalanceEv')
         valueScale = self.safe_integer(currency, 'valueScale', 8)
         account['total'] = self.from_en(accountBalanceEv, valueScale, valueScale, DECIMAL_PLACES)
         account['used'] = self.from_en(totalUsedBalanceEv, valueScale, valueScale, DECIMAL_PLACES)
@@ -1567,20 +1566,20 @@ class phemex(Exchange):
             clientOrderId = None
         marketId = self.safe_string(order, 'symbol')
         symbol = self.safe_symbol(marketId, market)
-        price = self.from_ep(self.safe_float(order, 'priceEp'), market)
+        price = self.from_ep(self.safe_number(order, 'priceEp'), market)
         if price == 0:
             price = None
-        amount = self.from_ev(self.safe_float(order, 'baseQtyEv'), market)
-        remaining = self.from_ev(self.safe_float(order, 'leavesBaseQtyEv'), market)
-        filled = self.from_ev(self.safe_float(order, 'cumBaseQtyEv'), market)
-        cost = self.from_ev(self.safe_float(order, 'quoteQtyEv'), market)
-        average = self.from_ep(self.safe_float(order, 'avgPriceEp'), market)
+        amount = self.from_ev(self.safe_number(order, 'baseQtyEv'), market)
+        remaining = self.from_ev(self.safe_number(order, 'leavesBaseQtyEv'), market)
+        filled = self.from_ev(self.safe_number(order, 'cumBaseQtyEv'), market)
+        cost = self.from_ev(self.safe_number(order, 'quoteQtyEv'), market)
+        average = self.from_ep(self.safe_number(order, 'avgPriceEp'), market)
         status = self.parse_order_status(self.safe_string(order, 'ordStatus'))
         side = self.safe_string_lower(order, 'side')
         type = self.parse_order_type(self.safe_string(order, 'ordType'))
         timestamp = self.safe_integer_product_2(order, 'actionTimeNs', 'createTimeNs', 0.000001)
         fee = None
-        feeCost = self.from_ev(self.safe_float(order, 'cumFeeEv'), market)
+        feeCost = self.from_ev(self.safe_number(order, 'cumFeeEv'), market)
         if feeCost is not None:
             fee = {
                 'cost': feeCost,
@@ -1590,7 +1589,7 @@ class phemex(Exchange):
             if (amount is not None) and (remaining is not None):
                 filled = min(0, amount - remaining)
         timeInForce = self.parse_time_in_force(self.safe_string(order, 'timeInForce'))
-        stopPrice = self.from_ep(self.safe_float(order, 'stopPxEp', market))
+        stopPrice = self.from_ep(self.safe_number(order, 'stopPxEp', market))
         postOnly = (timeInForce == 'PO')
         return {
             'info': order,
@@ -1661,17 +1660,17 @@ class phemex(Exchange):
         status = self.parse_order_status(self.safe_string(order, 'ordStatus'))
         side = self.safe_string_lower(order, 'side')
         type = self.parse_order_type(self.safe_string(order, 'orderType'))
-        price = self.from_ep(self.safe_float(order, 'priceEp'), market)
-        amount = self.safe_float(order, 'orderQty')
-        filled = self.safe_float(order, 'cumQty')
-        remaining = self.safe_float(order, 'leavesQty')
+        price = self.from_ep(self.safe_number(order, 'priceEp'), market)
+        amount = self.safe_number(order, 'orderQty')
+        filled = self.safe_number(order, 'cumQty')
+        remaining = self.safe_number(order, 'leavesQty')
         timestamp = self.safe_integer_product(order, 'actionTimeNs', 0.000001)
-        cost = self.safe_float(order, 'cumValue')
+        cost = self.safe_number(order, 'cumValue')
         lastTradeTimestamp = self.safe_integer_product(order, 'transactTimeNs', 0.000001)
         if lastTradeTimestamp == 0:
             lastTradeTimestamp = None
         timeInForce = self.parse_time_in_force(self.safe_string(order, 'timeInForce'))
-        stopPrice = self.safe_float(order, 'stopPx')
+        stopPrice = self.safe_number(order, 'stopPx')
         postOnly = (timeInForce == 'PO')
         return {
             'info': order,
@@ -1741,7 +1740,7 @@ class phemex(Exchange):
                     qtyType = 'ByQuote'
             request['qtyType'] = qtyType
             if qtyType == 'ByQuote':
-                cost = self.safe_float(params, 'cost')
+                cost = self.safe_number(params, 'cost')
                 params = self.omit(params, 'cost')
                 if self.options['createOrderByQuoteRequiresPrice']:
                     if price is not None:
@@ -1756,7 +1755,7 @@ class phemex(Exchange):
             request['orderQty'] = int(amount)
         if type == 'Limit':
             request['priceEp'] = self.to_ep(price, market)
-        stopPrice = self.safe_float_2(params, 'stopPx', 'stopPrice')
+        stopPrice = self.safe_number_2(params, 'stopPx', 'stopPrice')
         if stopPrice is not None:
             request['stopPxEp'] = self.to_ep(stopPrice, market)
         params = self.omit(params, ['stopPx', 'stopPrice'])
@@ -2227,7 +2226,7 @@ class phemex(Exchange):
         code = currency['code']
         timestamp = self.safe_integer_2(transaction, 'createdAt', 'submitedAt')
         type = self.safe_string_lower(transaction, 'type')
-        feeCost = self.from_en(self.safe_float(transaction, 'feeEv'), currency['valueScale'], currency['precision'])
+        feeCost = self.from_en(self.safe_number(transaction, 'feeEv'), currency['valueScale'], currency['precision'])
         fee = None
         if feeCost is not None:
             type = 'withdrawal'
@@ -2236,7 +2235,7 @@ class phemex(Exchange):
                 'currency': code,
             }
         status = self.parse_transaction_status(self.safe_string(transaction, 'status'))
-        amount = self.from_en(self.safe_float(transaction, 'amountEv'), currency['valueScale'], currency['precision'])
+        amount = self.from_en(self.safe_number(transaction, 'amountEv'), currency['valueScale'], currency['precision'])
         return {
             'info': transaction,
             'id': id,
@@ -2257,7 +2256,7 @@ class phemex(Exchange):
             'fee': fee,
         }
 
-    def fetch_positions(self, symbols=None, since=None, limit=None, params={}):
+    def fetch_positions(self, symbols=None, params={}):
         self.load_markets()
         code = self.safe_string(params, 'code')
         request = {}

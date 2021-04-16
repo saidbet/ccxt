@@ -4,7 +4,7 @@
 
 # -----------------------------------------------------------------------------
 
-__version__ = '1.41.47'
+__version__ = '1.47.93'
 
 # -----------------------------------------------------------------------------
 
@@ -52,8 +52,8 @@ from ccxt.base.errors import error_hierarchy                # noqa: F401
 
 
 from ccxt.async_support.aax import aax                                    # noqa: F401
-from ccxt.async_support.acx import acx                                    # noqa: F401
 from ccxt.async_support.aofex import aofex                                # noqa: F401
+from ccxt.async_support.ascendex import ascendex                          # noqa: F401
 from ccxt.async_support.bequant import bequant                            # noqa: F401
 from ccxt.async_support.bibox import bibox                                # noqa: F401
 from ccxt.async_support.bigone import bigone                              # noqa: F401
@@ -71,7 +71,6 @@ from ccxt.async_support.bitget import bitget                              # noqa
 from ccxt.async_support.bithumb import bithumb                            # noqa: F401
 from ccxt.async_support.bitkk import bitkk                                # noqa: F401
 from ccxt.async_support.bitmart import bitmart                            # noqa: F401
-from ccxt.async_support.bitmax import bitmax                              # noqa: F401
 from ccxt.async_support.bitmex import bitmex                              # noqa: F401
 from ccxt.async_support.bitpanda import bitpanda                          # noqa: F401
 from ccxt.async_support.bitrue import bitrue                              # noqa: F401
@@ -95,7 +94,6 @@ from ccxt.async_support.bybit import bybit                                # noqa
 from ccxt.async_support.bytetrade import bytetrade                        # noqa: F401
 from ccxt.async_support.cdax import cdax                                  # noqa: F401
 from ccxt.async_support.cex import cex                                    # noqa: F401
-from ccxt.async_support.chilebit import chilebit                          # noqa: F401
 from ccxt.async_support.coinbase import coinbase                          # noqa: F401
 from ccxt.async_support.coinbaseprime import coinbaseprime                # noqa: F401
 from ccxt.async_support.coinbasepro import coinbasepro                    # noqa: F401
@@ -114,7 +112,7 @@ from ccxt.async_support.currencycom import currencycom                    # noqa
 from ccxt.async_support.delta import delta                                # noqa: F401
 from ccxt.async_support.deribit import deribit                            # noqa: F401
 from ccxt.async_support.digifinex import digifinex                        # noqa: F401
-from ccxt.async_support.dsx import dsx                                    # noqa: F401
+from ccxt.async_support.equos import equos                                # noqa: F401
 from ccxt.async_support.eterbase import eterbase                          # noqa: F401
 from ccxt.async_support.exmo import exmo                                  # noqa: F401
 from ccxt.async_support.exx import exx                                    # noqa: F401
@@ -131,7 +129,6 @@ from ccxt.async_support.hitbtc import hitbtc                              # noqa
 from ccxt.async_support.hollaex import hollaex                            # noqa: F401
 from ccxt.async_support.huobijp import huobijp                            # noqa: F401
 from ccxt.async_support.huobipro import huobipro                          # noqa: F401
-from ccxt.async_support.ice3x import ice3x                                # noqa: F401
 from ccxt.async_support.idex import idex                                  # noqa: F401
 from ccxt.async_support.independentreserve import independentreserve      # noqa: F401
 from ccxt.async_support.indodax import indodax                            # noqa: F401
@@ -147,6 +144,7 @@ from ccxt.async_support.luno import luno                                  # noqa
 from ccxt.async_support.lykke import lykke                                # noqa: F401
 from ccxt.async_support.mercado import mercado                            # noqa: F401
 from ccxt.async_support.mixcoins import mixcoins                          # noqa: F401
+from ccxt.async_support.ndax import ndax                                  # noqa: F401
 from ccxt.async_support.novadax import novadax                            # noqa: F401
 from ccxt.async_support.oceanex import oceanex                            # noqa: F401
 from ccxt.async_support.okcoin import okcoin                              # noqa: F401
@@ -166,7 +164,6 @@ from ccxt.async_support.tidebit import tidebit                            # noqa
 from ccxt.async_support.tidex import tidex                                # noqa: F401
 from ccxt.async_support.timex import timex                                # noqa: F401
 from ccxt.async_support.upbit import upbit                                # noqa: F401
-from ccxt.async_support.vaultoro import vaultoro                          # noqa: F401
 from ccxt.async_support.vbtc import vbtc                                  # noqa: F401
 from ccxt.async_support.vcc import vcc                                    # noqa: F401
 from ccxt.async_support.wavesexchange import wavesexchange                # noqa: F401
@@ -179,8 +176,8 @@ from ccxt.async_support.zb import zb                                      # noqa
 
 exchanges = [
     'aax',
-    'acx',
     'aofex',
+    'ascendex',
     'bequant',
     'bibox',
     'bigone',
@@ -198,7 +195,6 @@ exchanges = [
     'bithumb',
     'bitkk',
     'bitmart',
-    'bitmax',
     'bitmex',
     'bitpanda',
     'bitrue',
@@ -222,7 +218,6 @@ exchanges = [
     'bytetrade',
     'cdax',
     'cex',
-    'chilebit',
     'coinbase',
     'coinbaseprime',
     'coinbasepro',
@@ -241,7 +236,7 @@ exchanges = [
     'delta',
     'deribit',
     'digifinex',
-    'dsx',
+    'equos',
     'eterbase',
     'exmo',
     'exx',
@@ -258,7 +253,6 @@ exchanges = [
     'hollaex',
     'huobijp',
     'huobipro',
-    'ice3x',
     'idex',
     'independentreserve',
     'indodax',
@@ -274,6 +268,7 @@ exchanges = [
     'lykke',
     'mercado',
     'mixcoins',
+    'ndax',
     'novadax',
     'oceanex',
     'okcoin',
@@ -293,7 +288,6 @@ exchanges = [
     'tidex',
     'timex',
     'upbit',
-    'vaultoro',
     'vbtc',
     'vcc',
     'wavesexchange',

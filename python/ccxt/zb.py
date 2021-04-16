@@ -5,7 +5,6 @@
 
 from ccxt.base.exchange import Exchange
 import hashlib
-import math
 from ccxt.base.errors import ExchangeError
 from ccxt.base.errors import AuthenticationError
 from ccxt.base.errors import ArgumentsRequired
@@ -16,6 +15,7 @@ from ccxt.base.errors import InvalidOrder
 from ccxt.base.errors import OrderNotFound
 from ccxt.base.errors import DDoSProtection
 from ccxt.base.errors import ExchangeNotAvailable
+from ccxt.base.precise import Precise
 
 
 class zb(Exchange):
@@ -42,6 +42,7 @@ class zb(Exchange):
                 'fetchOrder': True,
                 'fetchOrderBook': True,
                 'fetchOrders': True,
+                'fetchClosedOrders': True,
                 'fetchTicker': True,
                 'fetchTickers': True,
                 'fetchTrades': True,
@@ -100,8 +101,8 @@ class zb(Exchange):
             'urls': {
                 'logo': 'https://user-images.githubusercontent.com/1294454/32859187-cd5214f0-ca5e-11e7-967d-96568e2e2bd1.jpg',
                 'api': {
-                    'public': 'http://api.zb.cn/data',  # no https for public API
-                    'private': 'https://trade.zb.cn/api',
+                    'public': 'https://api.zb.today/data',
+                    'private': 'https://trade.zb.today/api',
                 },
                 'www': 'https://www.zb.com',
                 'doc': 'https://www.zb.com/i/developer',
@@ -122,12 +123,14 @@ class zb(Exchange):
                     'get': [
                         # spot API
                         'order',
+                        'orderMoreV2',
                         'cancelOrder',
                         'getOrder',
                         'getOrders',
                         'getOrdersNew',
                         'getOrdersIgnoreTradeType',
                         'getUnfinishedOrdersIgnoreTradeType',
+                        'getFinishedAndPartialOrders',
                         'getAccountInfo',
                         'getUserAddress',
                         'getPayinAddress',
@@ -137,6 +140,11 @@ class zb(Exchange):
                         'getCnyWithdrawRecord',
                         'getCnyChargeRecord',
                         'withdraw',
+                        # sub accounts
+                        'addSubUser',
+                        'getSubUserList',
+                        'doTransferFunds',
+                        'createSubUserKey',
                         # leverage API
                         'getLeverAssetsInfo',
                         'getLeverBills',
@@ -147,8 +155,21 @@ class zb(Exchange):
                         'getLoans',
                         'getLoanRecords',
                         'borrow',
+                        'autoBorrow',
                         'repay',
+                        'doAllRepay',
                         'getRepayments',
+                        'getFinanceRecords',
+                        'changeInvestMark',
+                        'changeLoop',
+                        # cross API
+                        'getCrossAssets',
+                        'getCrossBills',
+                        'transferInCross',
+                        'transferOutCross',
+                        'doCrossLoan',
+                        'doCrossRepay',
+                        'getCrossRepayRecords',
                     ],
                 },
             },
@@ -195,6 +216,16 @@ class zb(Exchange):
 
     def fetch_markets(self, params={}):
         markets = self.publicGetMarkets(params)
+        #
+        #     {
+        #         "zb_qc":{
+        #             "amountScale":2,
+        #             "minAmount":0.01,
+        #             "minSize":5,
+        #             "priceScale":4,
+        #         },
+        #     }
+        #
         keys = list(markets.keys())
         result = []
         for i in range(0, len(keys)):
@@ -204,9 +235,13 @@ class zb(Exchange):
             base = self.safe_currency_code(baseId)
             quote = self.safe_currency_code(quoteId)
             symbol = base + '/' + quote
+            amountPrecisionString = self.safe_string(market, 'amountScale')
+            pricePrecisionString = self.safe_string(market, 'priceScale')
+            amountLimit = None if (amountPrecisionString is None) else '1e-' + amountPrecisionString
+            priceLimit = None if (pricePrecisionString is None) else '1e-' + pricePrecisionString
             precision = {
-                'amount': self.safe_integer(market, 'amountScale'),
-                'price': self.safe_integer(market, 'priceScale'),
+                'amount': int(amountPrecisionString),
+                'price': int(pricePrecisionString),
             }
             result.append({
                 'id': id,
@@ -219,11 +254,11 @@ class zb(Exchange):
                 'precision': precision,
                 'limits': {
                     'amount': {
-                        'min': math.pow(10, -precision['amount']),
+                        'min': self.parse_number(amountLimit),
                         'max': None,
                     },
                     'price': {
-                        'min': math.pow(10, -precision['price']),
+                        'min': self.parse_number(priceLimit),
                         'max': None,
                     },
                     'cost': {
@@ -256,10 +291,10 @@ class zb(Exchange):
             account = self.account()
             currencyId = self.safe_string(balance, 'key')
             code = self.safe_currency_code(currencyId)
-            account['free'] = self.safe_float(balance, 'available')
-            account['used'] = self.safe_float(balance, 'freez')
+            account['free'] = self.safe_string(balance, 'available')
+            account['used'] = self.safe_string(balance, 'freez')
             result[code] = account
-        return self.parse_balance(result)
+        return self.parse_balance(result, False)
 
     def parse_deposit_address(self, depositAddress, currency=None):
         #
@@ -304,15 +339,6 @@ class zb(Exchange):
             'tag': tag,
             'info': depositAddress,
         }
-
-    def parse_deposit_addresses(self, addresses, codes=None):
-        result = []
-        for i in range(0, len(addresses)):
-            address = self.parse_deposit_address(addresses[i])
-            result.append(address)
-        if codes:
-            result = self.filter_by_array(result, 'currency', codes)
-        return self.index_by(result, 'currency')
 
     def fetch_deposit_addresses(self, codes=None, params={}):
         self.load_markets()
@@ -411,16 +437,16 @@ class zb(Exchange):
         symbol = None
         if market is not None:
             symbol = market['symbol']
-        last = self.safe_float(ticker, 'last')
+        last = self.safe_number(ticker, 'last')
         return {
             'symbol': symbol,
             'timestamp': timestamp,
             'datetime': self.iso8601(timestamp),
-            'high': self.safe_float(ticker, 'high'),
-            'low': self.safe_float(ticker, 'low'),
-            'bid': self.safe_float(ticker, 'buy'),
+            'high': self.safe_number(ticker, 'high'),
+            'low': self.safe_number(ticker, 'low'),
+            'bid': self.safe_number(ticker, 'buy'),
             'bidVolume': None,
-            'ask': self.safe_float(ticker, 'sell'),
+            'ask': self.safe_number(ticker, 'sell'),
             'askVolume': None,
             'vwap': None,
             'open': None,
@@ -430,10 +456,20 @@ class zb(Exchange):
             'change': None,
             'percentage': None,
             'average': None,
-            'baseVolume': self.safe_float(ticker, 'vol'),
+            'baseVolume': self.safe_number(ticker, 'vol'),
             'quoteVolume': None,
             'info': ticker,
         }
+
+    def parse_ohlcv(self, ohlcv, market=None):
+        return [
+            self.safe_integer(ohlcv, 0),
+            self.safe_number(ohlcv, 1),
+            self.safe_number(ohlcv, 2),
+            self.safe_number(ohlcv, 3),
+            self.safe_number(ohlcv, 4),
+            self.safe_number(ohlcv, 5),
+        ]
 
     def fetch_ohlcv(self, symbol, timeframe='1m', since=None, limit=None, params={}):
         self.load_markets()
@@ -456,12 +492,12 @@ class zb(Exchange):
         side = self.safe_string(trade, 'trade_type')
         side = 'buy' if (side == 'bid') else 'sell'
         id = self.safe_string(trade, 'tid')
-        price = self.safe_float(trade, 'price')
-        amount = self.safe_float(trade, 'amount')
-        cost = None
-        if price is not None:
-            if amount is not None:
-                cost = price * amount
+        priceString = self.safe_string(trade, 'price')
+        amountString = self.safe_string(trade, 'amount')
+        costString = Precise.string_mul(priceString, amountString)
+        price = self.parse_number(priceString)
+        amount = self.parse_number(amountString)
+        cost = self.parse_number(costString)
         symbol = None
         if market is not None:
             symbol = market['symbol']
@@ -561,9 +597,22 @@ class zb(Exchange):
             raise e
         return self.parse_orders(response, market, since, limit)
 
+    def fetch_closed_orders(self, symbol=None, since=None, limit=None, params={}):
+        if symbol is None:
+            raise ArgumentsRequired(self.id + 'fetchClosedOrders() requires a symbol argument')
+        self.load_markets()
+        market = self.market(symbol)
+        request = {
+            'currency': market['id'],
+            'pageIndex': 1,  # default pageIndex is 1
+            'pageSize': 10,  # default pageSize is 10, doesn't work with other values now
+        }
+        response = self.privateGetGetFinishedAndPartialOrders(self.extend(request, params))
+        return self.parse_orders(response, market, since, limit)
+
     def fetch_open_orders(self, symbol=None, since=None, limit=10, params={}):
         if symbol is None:
-            raise ArgumentsRequired(self.id + 'fetchOpenOrders requires a symbol argument')
+            raise ArgumentsRequired(self.id + 'fetchOpenOrders() requires a symbol argument')
         self.load_markets()
         market = self.market(symbol)
         request = {
@@ -586,19 +635,20 @@ class zb(Exchange):
 
     def parse_order(self, order, market=None):
         #
-        # fetchOrder
-        #
         #     {
-        #         'total_amount': 0.01,
-        #         'id': '20180910244276459',
-        #         'price': 180.0,
-        #         'trade_date': 1536576744960,
-        #         'status': 2,
-        #         'trade_money': '1.96742',
-        #         'trade_amount': 0.01,
-        #         'type': 0,
-        #         'currency': 'eth_usdt'
-        #     }
+        #         acctType: 0,
+        #         currency: 'btc_usdt',
+        #         fees: 3.6e-7,
+        #         id: '202102282829772463',
+        #         price: 45177.5,
+        #         status: 2,
+        #         total_amount: 0.0002,
+        #         trade_amount: 0.0002,
+        #         trade_date: 1614515104998,
+        #         trade_money: 8.983712,
+        #         type: 1,
+        #         useZbFee: False
+        #     },
         #
         side = self.safe_integer(order, 'type')
         side = 'buy' if (side == 1) else 'sell'
@@ -606,20 +656,26 @@ class zb(Exchange):
         timestamp = self.safe_integer(order, 'trade_date')
         marketId = self.safe_string(order, 'currency')
         symbol = self.safe_symbol(marketId, market, '_')
-        price = self.safe_float(order, 'price')
-        filled = self.safe_float(order, 'trade_amount')
-        amount = self.safe_float(order, 'total_amount')
-        remaining = None
-        if amount is not None:
-            if filled is not None:
-                remaining = amount - filled
-        cost = self.safe_float(order, 'trade_money')
-        average = None
+        price = self.safe_number(order, 'price')
+        filled = self.safe_number(order, 'trade_amount')
+        amount = self.safe_number(order, 'total_amount')
+        cost = self.safe_number(order, 'trade_money')
         status = self.parse_order_status(self.safe_string(order, 'status'))
-        if (cost is not None) and (filled is not None) and (filled > 0):
-            average = cost / filled
         id = self.safe_string(order, 'id')
-        return {
+        feeCost = self.safe_number(order, 'fees')
+        fee = None
+        if feeCost is not None:
+            feeCurrency = None
+            zbFees = self.safe_value(order, 'useZbFee')
+            if zbFees is True:
+                feeCurrency = 'ZB'
+            elif market is not None:
+                feeCurrency = market['quote'] if (side == 'sell') else market['base']
+            fee = {
+                'cost': feeCost,
+                'currency': feeCurrency,
+            }
+        return self.safe_order({
             'info': order,
             'id': id,
             'clientOrderId': None,
@@ -633,15 +689,15 @@ class zb(Exchange):
             'side': side,
             'price': price,
             'stopPrice': None,
-            'average': average,
+            'average': None,
             'cost': cost,
             'amount': amount,
             'filled': filled,
-            'remaining': remaining,
+            'remaining': None,
             'status': status,
-            'fee': None,
+            'fee': fee,
             'trades': None,
-        }
+        })
 
     def parse_order_status(self, status):
         statuses = {
@@ -701,7 +757,7 @@ class zb(Exchange):
         #
         id = self.safe_string(transaction, 'id')
         txid = self.safe_string(transaction, 'hash')
-        amount = self.safe_float(transaction, 'amount')
+        amount = self.safe_number(transaction, 'amount')
         timestamp = self.parse8601(self.safe_string(transaction, 'submit_time'))
         timestamp = self.safe_integer(transaction, 'submitTime', timestamp)
         address = self.safe_string_2(transaction, 'toAddress', 'address')
@@ -719,7 +775,7 @@ class zb(Exchange):
             type = 'withdrawal' if (confirmTimes is None) else 'deposit'
         status = self.parse_transaction_status(self.safe_string(transaction, 'status'))
         fee = None
-        feeCost = self.safe_float(transaction, 'fees')
+        feeCost = self.safe_number(transaction, 'fees')
         if feeCost is not None:
             fee = {
                 'cost': feeCost,
@@ -748,10 +804,10 @@ class zb(Exchange):
     def withdraw(self, code, amount, address, tag=None, params={}):
         password = self.safe_string(params, 'safePwd', self.password)
         if password is None:
-            raise ArgumentsRequired(self.id + ' withdraw requires exchange.password or a safePwd parameter')
-        fees = self.safe_float(params, 'fees')
+            raise ArgumentsRequired(self.id + ' withdraw() requires exchange.password or a safePwd parameter')
+        fees = self.safe_number(params, 'fees')
         if fees is None:
-            raise ArgumentsRequired(self.id + ' withdraw requires a fees parameter')
+            raise ArgumentsRequired(self.id + ' withdraw() requires a fees parameter')
         self.check_address(address)
         self.load_markets()
         currency = self.currency(code)
